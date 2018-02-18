@@ -13,3 +13,6 @@ Currently, this project looks for environment variables to connect to a DB.  See
 - DBPORT
 - DBNAME
 
+### License
+
+See License file. (currently MIT)
