@@ -23,7 +23,7 @@ func main() {
 	err = store.Insert(&model.User{
 		Name:     "john",
 		Email:    "john@doe.me",
-		Passhash: "1234bunnies",
+		Passhash: "1234bunnies", // please properly salt and hash your passwords.
 	})
 	if err != nil {
 		log.Println(3103303232, err)
