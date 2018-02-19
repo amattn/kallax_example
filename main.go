@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"runtime"
 	"time"
 
 	"./model"
@@ -10,17 +11,27 @@ import (
 )
 
 func main() {
+	log.Printf("Starting kallax_example (%v, v%v, build %v)", runtime.Version(), Version(), BuildNumber())
+	log.Println("Connecting to DB")
 
 	db, err := openDB()
 	if err != nil {
-		log.Println(3103303200, err)
+		log.Println(3103303200, "unable to open connection to DB\n", err)
 		return
 	}
-	log.Println(db)
 
 	store := model.NewUserStore(db) // it just needs an instance of *sql.DB
 
-	err = store.Insert(&model.User{
+	insert_user(store)
+
+	query_user(store)
+}
+
+func insert_user(store *model.UserStore) {
+	log.Println("Insert User")
+	defer trace("insert_user", time.Now())
+
+	err := store.Insert(&model.User{
 		Name:     "john",
 		Email:    "john@doe.me",
 		Passhash: "1234bunnies", // please properly salt and hash your passwords.
@@ -29,6 +40,11 @@ func main() {
 		log.Println(3103303232, err)
 		return
 	}
+}
+
+func query_user(store *model.UserStore) {
+	log.Println("Query User")
+	defer trace("query_user", time.Now())
 
 	q := model.NewUserQuery().
 		FindByName("john").

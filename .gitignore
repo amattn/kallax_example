@@ -3,3 +3,5 @@
 *.ignore
 
 kallax_example
+
+export_env_vars*
