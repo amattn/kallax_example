@@ -13,6 +13,8 @@ type User struct {
 	Passhash string
 	Name     string
 	Phone    string
+
+	Company *Company `fk:",inverse"`
 }
 
 type Company struct {
@@ -21,4 +23,6 @@ type Company struct {
 	ID      int64
 	Name    string
 	Address string
+
+	Users []*User `fk:""`
 }

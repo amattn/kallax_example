@@ -11,13 +11,7 @@ echo "building native platform"
 
 echo "Generating model"
 cd model
-if ! go generate ; then
-   go build
-   exit 1
-fi
-
-./generate_migrations.sh
-
+./build_and_generate_model.sh
 cd ..
 
 echo "Generating main"

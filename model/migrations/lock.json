@@ -111,6 +111,17 @@
           "Reference": null,
           "NotNull": true,
           "Unique": false
+        },
+        {
+          "Name": "company_id",
+          "Type": "bigint",
+          "PrimaryKey": false,
+          "Reference": {
+            "Table": "companies",
+            "Column": "id"
+          },
+          "NotNull": false,
+          "Unique": false
         }
       ]
     }

@@ -7,6 +7,8 @@ import (
 
 	"./model"
 
+	"github.com/amattn/deeperror"
+
 	kallax "gopkg.in/src-d/go-kallax.v1"
 )
 
@@ -20,14 +22,34 @@ func main() {
 		return
 	}
 
-	store := model.NewUserStore(db) // it just needs an instance of *sql.DB
+	costore := model.NewCompanyStore(db)
+	userstore := model.NewUserStore(db)
 
-	insert_user(store)
+	company, err := insert_company(costore)
 
-	query_user(store)
+	insert_user(userstore, company)
+
+	query_user(userstore)
 }
 
-func insert_user(store *model.UserStore) {
+func insert_company(store *model.CompanyStore) (*model.Company, error) {
+	log.Println("Insert Company")
+	defer trace("insert_company", time.Now())
+
+	comp := model.NewCompany()
+	comp.Name = "SomeCo"
+	comp.Address = "12345 Main St. Anytown, AA, USA"
+
+	err := store.Insert(comp)
+	if err != nil {
+		derr := deeperror.New(2283340241, "Insert error", err)
+		return nil, derr
+	}
+
+	return comp, nil
+}
+
+func insert_user(store *model.UserStore, comp *model.Company) {
 	log.Println("Insert User")
 	defer trace("insert_user", time.Now())
 
@@ -35,6 +57,7 @@ func insert_user(store *model.UserStore) {
 		Name:     "john",
 		Email:    "john@doe.me",
 		Passhash: "1234bunnies", // please properly salt and hash your passwords.
+		Company:  comp,
 	})
 	if err != nil {
 		log.Println(3103303232, err)

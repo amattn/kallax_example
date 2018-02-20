@@ -69,12 +69,35 @@ func (r *Company) Value(col string) (interface{}, error) {
 // NewRelationshipRecord returns a new record for the relatiobship in the given
 // field.
 func (r *Company) NewRelationshipRecord(field string) (kallax.Record, error) {
-	return nil, fmt.Errorf("kallax: model Company has no relationships")
+	switch field {
+	case "Users":
+		return new(User), nil
+
+	}
+	return nil, fmt.Errorf("kallax: model Company has no relationship %s", field)
 }
 
 // SetRelationship sets the given relationship in the given field.
 func (r *Company) SetRelationship(field string, rel interface{}) error {
-	return fmt.Errorf("kallax: model Company has no relationships")
+	switch field {
+	case "Users":
+		records, ok := rel.([]kallax.Record)
+		if !ok {
+			return fmt.Errorf("kallax: relationship field %s needs a collection of records, not %T", field, rel)
+		}
+
+		r.Users = make([]*User, len(records))
+		for i, record := range records {
+			rel, ok := record.(*User)
+			if !ok {
+				return fmt.Errorf("kallax: element of type %T cannot be added to relationship %s", record, field)
+			}
+			r.Users[i] = rel
+		}
+		return nil
+
+	}
+	return fmt.Errorf("kallax: model Company has no relationship %s", field)
 }
 
 // CompanyStore is the entity to access the records of the type Company
@@ -111,6 +134,23 @@ func (s *CompanyStore) DebugWith(logger kallax.LoggerFunc) *CompanyStore {
 	return &CompanyStore{s.Store.DebugWith(logger)}
 }
 
+func (s *CompanyStore) relationshipRecords(record *Company) []modelSaveFunc {
+	var result []modelSaveFunc
+
+	for i := range record.Users {
+		r := record.Users[i]
+		if !r.IsSaving() {
+			r.AddVirtualColumn("company_id", record.GetID())
+			result = append(result, func(store *kallax.Store) error {
+				_, err := (&UserStore{store}).Save(r)
+				return err
+			})
+		}
+	}
+
+	return result
+}
+
 // Insert inserts a Company in the database. A non-persisted object is
 // required for this operation.
 func (s *CompanyStore) Insert(record *Company) error {
@@ -122,6 +162,24 @@ func (s *CompanyStore) Insert(record *Company) error {
 
 	if err := record.BeforeSave(); err != nil {
 		return err
+	}
+
+	records := s.relationshipRecords(record)
+
+	if len(records) > 0 {
+		return s.Store.Transaction(func(s *kallax.Store) error {
+			if err := s.Insert(Schema.Company.BaseSchema, record); err != nil {
+				return err
+			}
+
+			for _, r := range records {
+				if err := r(s); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		})
 	}
 
 	return s.Store.Insert(Schema.Company.BaseSchema, record)
@@ -142,6 +200,30 @@ func (s *CompanyStore) Update(record *Company, cols ...kallax.SchemaField) (upda
 
 	if err := record.BeforeSave(); err != nil {
 		return 0, err
+	}
+
+	records := s.relationshipRecords(record)
+
+	if len(records) > 0 {
+		err = s.Store.Transaction(func(s *kallax.Store) error {
+			updated, err = s.Update(Schema.Company.BaseSchema, record, cols...)
+			if err != nil {
+				return err
+			}
+
+			for _, r := range records {
+				if err := r(s); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		})
+		if err != nil {
+			return 0, err
+		}
+
+		return updated, nil
 	}
 
 	return s.Store.Update(Schema.Company.BaseSchema, record, cols...)
@@ -261,6 +343,98 @@ func (s *CompanyStore) Transaction(callback func(*CompanyStore) error) error {
 	})
 }
 
+// RemoveUsers removes the given items of the Users field of the
+// model. If no items are given, it removes all of them.
+// The items will also be removed from the passed record inside this method.
+// Note that is required that `Users` is not empty. This method clears the
+// the elements of Users in a model, it does not retrieve them to know
+// what relationships the model has.
+func (s *CompanyStore) RemoveUsers(record *Company, deleted ...*User) error {
+	var updated []*User
+	var clear bool
+	if len(deleted) == 0 {
+		clear = true
+		deleted = record.Users
+		if len(deleted) == 0 {
+			return nil
+		}
+	}
+
+	if len(deleted) > 1 {
+		err := s.Store.Transaction(func(s *kallax.Store) error {
+			for _, d := range deleted {
+				var r kallax.Record = d
+
+				if beforeDeleter, ok := r.(kallax.BeforeDeleter); ok {
+					if err := beforeDeleter.BeforeDelete(); err != nil {
+						return err
+					}
+				}
+
+				if err := s.Delete(Schema.User.BaseSchema, d); err != nil {
+					return err
+				}
+
+				if afterDeleter, ok := r.(kallax.AfterDeleter); ok {
+					if err := afterDeleter.AfterDelete(); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		if clear {
+			record.Users = nil
+			return nil
+		}
+	} else {
+		var r kallax.Record = deleted[0]
+		if beforeDeleter, ok := r.(kallax.BeforeDeleter); ok {
+			if err := beforeDeleter.BeforeDelete(); err != nil {
+				return err
+			}
+		}
+
+		var err error
+		if afterDeleter, ok := r.(kallax.AfterDeleter); ok {
+			err = s.Store.Transaction(func(s *kallax.Store) error {
+				err := s.Delete(Schema.User.BaseSchema, r)
+				if err != nil {
+					return err
+				}
+
+				return afterDeleter.AfterDelete()
+			})
+		} else {
+			err = s.Store.Delete(Schema.User.BaseSchema, deleted[0])
+		}
+
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, r := range record.Users {
+		var found bool
+		for _, d := range deleted {
+			if d.GetID().Equals(r.GetID()) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			updated = append(updated, r)
+		}
+	}
+	record.Users = updated
+	return nil
+}
+
 // CompanyQuery is the object used to create queries for the Company
 // entity.
 type CompanyQuery struct {
@@ -326,6 +500,11 @@ func (q *CompanyQuery) Offset(n uint64) *CompanyQuery {
 // using a logical AND.
 func (q *CompanyQuery) Where(cond kallax.Condition) *CompanyQuery {
 	q.BaseQuery.Where(cond)
+	return q
+}
+
+func (q *CompanyQuery) WithUsers(cond kallax.Condition) *CompanyQuery {
+	q.AddRelation(Schema.User.BaseSchema, "Users", kallax.OneToMany, cond)
 	return q
 }
 
@@ -504,6 +683,8 @@ func (r *User) ColumnAddress(col string) (interface{}, error) {
 		return &r.Name, nil
 	case "phone":
 		return &r.Phone, nil
+	case "company_id":
+		return types.Nullable(kallax.VirtualColumn("company_id", r, new(kallax.NumericID))), nil
 
 	default:
 		return nil, fmt.Errorf("kallax: invalid column in User: %s", col)
@@ -529,6 +710,12 @@ func (r *User) Value(col string) (interface{}, error) {
 		return r.Name, nil
 	case "phone":
 		return r.Phone, nil
+	case "company_id":
+		v := r.Model.VirtualColumn(col)
+		if v == nil {
+			return nil, kallax.ErrEmptyVirtualColumn
+		}
+		return v, nil
 
 	default:
 		return nil, fmt.Errorf("kallax: invalid column in User: %s", col)
@@ -538,12 +725,30 @@ func (r *User) Value(col string) (interface{}, error) {
 // NewRelationshipRecord returns a new record for the relatiobship in the given
 // field.
 func (r *User) NewRelationshipRecord(field string) (kallax.Record, error) {
-	return nil, fmt.Errorf("kallax: model User has no relationships")
+	switch field {
+	case "Company":
+		return new(Company), nil
+
+	}
+	return nil, fmt.Errorf("kallax: model User has no relationship %s", field)
 }
 
 // SetRelationship sets the given relationship in the given field.
 func (r *User) SetRelationship(field string, rel interface{}) error {
-	return fmt.Errorf("kallax: model User has no relationships")
+	switch field {
+	case "Company":
+		val, ok := rel.(*Company)
+		if !ok {
+			return fmt.Errorf("kallax: record of type %t can't be assigned to relationship Company", rel)
+		}
+		if !val.GetID().IsEmpty() {
+			r.Company = val
+		}
+
+		return nil
+
+	}
+	return fmt.Errorf("kallax: model User has no relationship %s", field)
 }
 
 // UserStore is the entity to access the records of the type User
@@ -580,6 +785,20 @@ func (s *UserStore) DebugWith(logger kallax.LoggerFunc) *UserStore {
 	return &UserStore{s.Store.DebugWith(logger)}
 }
 
+func (s *UserStore) inverseRecords(record *User) []modelSaveFunc {
+	var result []modelSaveFunc
+
+	if record.Company != nil && !record.Company.IsSaving() {
+		record.AddVirtualColumn("company_id", record.Company.GetID())
+		result = append(result, func(store *kallax.Store) error {
+			_, err := (&CompanyStore{store}).Save(record.Company)
+			return err
+		})
+	}
+
+	return result
+}
+
 // Insert inserts a User in the database. A non-persisted object is
 // required for this operation.
 func (s *UserStore) Insert(record *User) error {
@@ -591,6 +810,24 @@ func (s *UserStore) Insert(record *User) error {
 
 	if err := record.BeforeSave(); err != nil {
 		return err
+	}
+
+	inverseRecords := s.inverseRecords(record)
+
+	if len(inverseRecords) > 0 {
+		return s.Store.Transaction(func(s *kallax.Store) error {
+			for _, r := range inverseRecords {
+				if err := r(s); err != nil {
+					return err
+				}
+			}
+
+			if err := s.Insert(Schema.User.BaseSchema, record); err != nil {
+				return err
+			}
+
+			return nil
+		})
 	}
 
 	return s.Store.Insert(Schema.User.BaseSchema, record)
@@ -611,6 +848,30 @@ func (s *UserStore) Update(record *User, cols ...kallax.SchemaField) (updated in
 
 	if err := record.BeforeSave(); err != nil {
 		return 0, err
+	}
+
+	inverseRecords := s.inverseRecords(record)
+
+	if len(inverseRecords) > 0 {
+		err = s.Store.Transaction(func(s *kallax.Store) error {
+			for _, r := range inverseRecords {
+				if err := r(s); err != nil {
+					return err
+				}
+			}
+
+			updated, err = s.Update(Schema.User.BaseSchema, record, cols...)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
+		if err != nil {
+			return 0, err
+		}
+
+		return updated, nil
 	}
 
 	return s.Store.Update(Schema.User.BaseSchema, record, cols...)
@@ -798,6 +1059,11 @@ func (q *UserQuery) Where(cond kallax.Condition) *UserQuery {
 	return q
 }
 
+func (q *UserQuery) WithCompany() *UserQuery {
+	q.AddRelation(Schema.Company.BaseSchema, "Company", kallax.OneToOne, nil)
+	return q
+}
+
 // FindByID adds a new filter to the query that will require that
 // the ID property is equal to one of the passed values; if no passed values,
 // it will do nothing.
@@ -852,6 +1118,12 @@ func (q *UserQuery) FindByName(v string) *UserQuery {
 // the Phone property is equal to the passed value.
 func (q *UserQuery) FindByPhone(v string) *UserQuery {
 	return q.Where(kallax.Eq(Schema.User.Phone, v))
+}
+
+// FindByCompany adds a new filter to the query that will require that
+// the foreign key of Company is equal to the passed value.
+func (q *UserQuery) FindByCompany(v int64) *UserQuery {
+	return q.Where(kallax.Eq(Schema.User.CompanyFK, v))
 }
 
 // UserResultSet is the set of results returned by a query to the
@@ -986,6 +1258,7 @@ type schemaUser struct {
 	Passhash  kallax.SchemaField
 	Name      kallax.SchemaField
 	Phone     kallax.SchemaField
+	CompanyFK kallax.SchemaField
 }
 
 var Schema = &schema{
@@ -994,7 +1267,9 @@ var Schema = &schema{
 			"companies",
 			"__company",
 			kallax.NewSchemaField("id"),
-			kallax.ForeignKeys{},
+			kallax.ForeignKeys{
+				"Users": kallax.NewForeignKey("company_id", false),
+			},
 			func() kallax.Record {
 				return new(Company)
 			},
@@ -1016,7 +1291,9 @@ var Schema = &schema{
 			"users",
 			"__user",
 			kallax.NewSchemaField("id"),
-			kallax.ForeignKeys{},
+			kallax.ForeignKeys{
+				"Company": kallax.NewForeignKey("company_id", true),
+			},
 			func() kallax.Record {
 				return new(User)
 			},
@@ -1029,6 +1306,7 @@ var Schema = &schema{
 			kallax.NewSchemaField("passhash"),
 			kallax.NewSchemaField("name"),
 			kallax.NewSchemaField("phone"),
+			kallax.NewSchemaField("company_id"),
 		),
 		ID:        kallax.NewSchemaField("id"),
 		CreatedAt: kallax.NewSchemaField("created_at"),
@@ -1038,5 +1316,6 @@ var Schema = &schema{
 		Passhash:  kallax.NewSchemaField("passhash"),
 		Name:      kallax.NewSchemaField("name"),
 		Phone:     kallax.NewSchemaField("phone"),
+		CompanyFK: kallax.NewSchemaField("company_id"),
 	},
 }
